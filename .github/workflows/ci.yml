@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce dev → main rule
+        if: github.base_ref == 'main' && github.head_ref != 'dev'
+        run: |
+          echo "Only dev can be merged into main"
+          exit 1
+
+      - name: Run tests
+        run: |
+          echo "Run tests here"
