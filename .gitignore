@@ -1,0 +1,86 @@
+#Huge .gitignore courtesy of ChatGPT
+
+# =========================
+# Python bytecode
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Virtual environments (CRITICAL)
+# =========================
+.venv/
+venv/
+ENV/
+env/
+
+# =========================
+# Environment variables / secrets
+# =========================
+.env
+.env.*
+*.env
+
+# =========================
+# Packaging / build artifacts
+# =========================
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# =========================
+# Testing / coverage
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# =========================
+# Logs & runtime files
+# =========================
+*.log
+logs/
+
+# =========================
+# IDEs / editors
+# =========================
+.vscode/
+.idea/
+*.iml
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Jupyter / data science
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Caches / temp
+# =========================
+.cache/
+.tmp/
+
+# =========================
+# LLM / data artifacts (optional but common)
+# =========================
+models/
+data/
+*.bin
+*.pt
+*.ckpt
+
+# =========================
+# Local config overrides
+# =========================
+config.local.*
