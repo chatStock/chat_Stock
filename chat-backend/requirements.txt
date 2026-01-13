@@ -1,5 +1,7 @@
-mcp
+python-dotenv
+huggingface_hub[mcp]
 httpx
+mcp
 pydantic
 pytest
 pytest-asyncio
