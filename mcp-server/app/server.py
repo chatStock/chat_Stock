@@ -38,3 +38,6 @@ async def get_quote(symbol: str) -> dict:
 async def get_news(symbol: str) -> list[dict]:
     raw_items = await fetch_news(symbol)
     return [shape_news_item(item).model_dump() for item in raw_items]
+
+if __name__ == "__main__":
+    mcp.run()
