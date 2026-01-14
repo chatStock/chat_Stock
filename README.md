@@ -1,9 +1,6 @@
 # chat_Stock
 
 #### Figure 1 — Docker Compose architecture of chat_Stock
-# chat_Stock
-
-#### Figure 1 — Docker Compose architecture of chat_Stock
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                    Docker Compose Network                    │
