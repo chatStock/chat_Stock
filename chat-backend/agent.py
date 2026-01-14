@@ -24,24 +24,37 @@ RULES:
 - NEVER hallucinate facts
 """
 
-agent = Agent(
-    model="Qwen/Qwen2.5-7B-Instruct",
-    prompt=SYSTEM_PROMPT,
-    servers=[
-        {
-            "type": "stdio",
-            "command": sys.executable,
-            "args": ["-m", "app.server"],
-            "cwd": str(MCP_SERVER_DIR),  # ← REQUIRED
-        }
-    ],
-)
+# Store agent instances per session
+_agents = {}
+
+def get_agent(session_id: str) -> Agent:
+    """Get or create an agent instance for a specific session"""
+    if session_id not in _agents:
+        _agents[session_id] = Agent(
+            model="Qwen/Qwen2.5-7B-Instruct",
+            prompt=SYSTEM_PROMPT,
+            servers=[
+                {
+                    "type": "stdio",
+                    "command": sys.executable,
+                    "args": ["-m", "app.server"],
+                    "cwd": str(MCP_SERVER_DIR),
+                }
+            ],
+        )
+    return _agents[session_id]
 
 async def ainput(prompt: str) -> str:
     return await asyncio.to_thread(input, prompt)
 
 
 async def chat_loop():
+    # Use a default session for CLI
+    session_id = "cli_session"
+    agent = get_agent(session_id)
+    await agent.load_tools()
+    print("MCP tools loaded")
+    
     while True:
         user_input = await ainput("You> ")
         if user_input.lower() in {"exit", "quit"}:
@@ -80,8 +93,6 @@ async def chat_loop():
 
 
 async def main():
-    await agent.load_tools()
-    print("✅ MCP tools loaded")
     await chat_loop()
 
 
