@@ -19,6 +19,24 @@ jobs:
           echo "Only dev can be merged into main"
           exit 1
 
-      - name: Run tests
+  backend-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: chat-backend
         run: |
-          echo "Run tests here"
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run backend unit tests
+        working-directory: chat-backend
+        run: |
+          pytest
