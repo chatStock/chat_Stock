@@ -6,3 +6,5 @@ pydantic
 pytest
 pytest-asyncio
 respx
+fastapi
+uvicorn
