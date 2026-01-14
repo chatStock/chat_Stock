@@ -1,15 +1,17 @@
+ 
 from typing import AsyncGenerator
 from agent import get_agent
 
 async def stream_agent_reply(session_id: str, user_input: str) -> AsyncGenerator[str, None]:
-    # Get the agent instance for this specific session
-    agent = get_agent(session_id)
-    
-    # Load tools if not already loaded
-    if not hasattr(agent, '_tools_loaded'):
-        await agent.load_tools()
-        agent._tools_loaded = True
-    
+    """
+    Stream a reply for ONE user message.
+
+    We intentionally create a fresh Agent per request to avoid state/tool-call
+    lockout issues caused by reusing a HuggingFace Agent instance across turns.
+    """
+    agent = get_agent()
+    await agent.load_tools()
+
     async for item in agent.run(user_input):
         if hasattr(item, "choices"):
             for choice in item.choices:
