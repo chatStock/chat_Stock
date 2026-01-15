@@ -19,53 +19,61 @@ You have access to EXACTLY TWO tools:
 
 RULES:
 - NEVER invent tool names
-- ALWAYS call the correct tool
+- ALWAYS call the correct tool when asked for price/quote or news
 - If a tool fails, say data is unavailable
 - NEVER hallucinate facts
+- If the user asks for multiple different companies in a single message,
+  ask them to choose ONE (because you can only call ONE tool per assistant turn).
 """
 
-# Store agent instances per session
-_agents = {}
+def get_agent() -> Agent:
+    """
+    Create a NEW agent instance.
 
-def get_agent(session_id: str) -> Agent:
-    """Get or create an agent instance for a specific session"""
-    if session_id not in _agents:
-        _agents[session_id] = Agent(
-            model="Qwen/Qwen2.5-7B-Instruct",
-            prompt=SYSTEM_PROMPT,
-            servers=[
-                {
-                    "type": "stdio",
-                    "command": sys.executable,
-                    "args": ["-m", "app.server"],
-                    "cwd": str(MCP_SERVER_DIR),
-                }
-            ],
-        )
-    return _agents[session_id]
+    IMPORTANT:
+    HuggingFace Agents are stateful. Re-using the same Agent across multiple user
+    requests can cause tool calls to stop working after the first one.
+    So we create a fresh agent per request.
+    """
+    return Agent(
+        model="Qwen/Qwen2.5-7B-Instruct",
+        prompt=SYSTEM_PROMPT,
+        servers=[
+            {
+                "type": "stdio",
+                "command": sys.executable,
+                "args": ["-m", "app.server"],
+                "cwd": str(MCP_SERVER_DIR),
+            }
+        ],
+    )
+
+
+# -------------------------
+# CLI (optional) - still works
+# -------------------------
 
 async def ainput(prompt: str) -> str:
     return await asyncio.to_thread(input, prompt)
 
 
 async def chat_loop():
-    # Use a default session for CLI
-    session_id = "cli_session"
-    agent = get_agent(session_id)
-    await agent.load_tools()
-    print("MCP tools loaded")
-    
+    print("CLI mode. Type 'exit' to quit.")
+
     while True:
         user_input = await ainput("You> ")
         if user_input.lower() in {"exit", "quit"}:
             break
+
+        agent = get_agent()
+        await agent.load_tools()
+        print("✅ MCP tools loaded")
 
         assistant_text = ""
         saw_tool_call = False
         saw_tool_response = False
 
         async for item in agent.run(user_input):
-
             if hasattr(item, "choices"):
                 for choice in item.choices:
                     delta = choice.delta
@@ -73,7 +81,7 @@ async def chat_loop():
                     if delta and delta.content:
                         assistant_text += delta.content
 
-                    if delta and delta.tool_calls:
+                    if delta and getattr(delta, "tool_calls", None):
                         saw_tool_call = True
                         print("🛠️ TOOL CALL REQUEST:", delta.tool_calls)
 
