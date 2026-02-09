@@ -4,6 +4,7 @@ Pytest-compatible MCP component tests
 These run in CI alongside other pytest tests
 """
 import pytest
+import httpx
 import sys
 from pathlib import Path
 
@@ -28,12 +29,32 @@ async def test_imports():
 
 
 @pytest.mark.asyncio
-async def test_market_client():
+async def test_market_client(respx_mock):
     """Test if market_client can reach market-api"""
     from app.market_client import fetch_quote, fetch_news
     from app.config import MARKET_API_URL
     
     print(f"   Target: {MARKET_API_URL}")
+    
+    # Mock the quote endpoint
+    respx_mock.get(f"{MARKET_API_URL}/quote").mock(
+        return_value=httpx.Response(200, json={
+            "c": 192.17,
+            "pc": 185.50,
+            "t": 1707494400
+        })
+    )
+    
+    # Mock the news endpoint
+    respx_mock.get(f"{MARKET_API_URL}/news").mock(
+        return_value=httpx.Response(200, json=[
+            {
+                "headline": "Test headline for AAPL",
+                "source": "Test Source",
+                "datetime": 1707494400
+            }
+        ])
+    )
     
     # Test quote
     print("\n   Testing fetch_quote('AAPL')...")
@@ -55,10 +76,31 @@ async def test_market_client():
 
 
 @pytest.mark.asyncio
-async def test_mcp_tools():
+async def test_mcp_tools(respx_mock):
     """Test if MCP server tools work"""
     from app.server import get_quote, get_news
+    from app.config import MARKET_API_URL
     print("   ✅ Imported MCP tools")
+    
+    # Mock the quote endpoint
+    respx_mock.get(f"{MARKET_API_URL}/quote").mock(
+        return_value=httpx.Response(200, json={
+            "c": 192.17,
+            "pc": 185.50,
+            "t": 1707494400
+        })
+    )
+    
+    # Mock the news endpoint
+    respx_mock.get(f"{MARKET_API_URL}/news").mock(
+        return_value=httpx.Response(200, json=[
+            {
+                "headline": "Test headline for AAPL",
+                "source": "Test Source",
+                "datetime": 1707494400
+            }
+        ])
+    )
     
     # Test get_quote
     print("\n   Testing get_quote('AAPL')...")
