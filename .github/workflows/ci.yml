@@ -40,3 +40,38 @@ jobs:
         working-directory: chat-backend
         run: |
           pytest
+
+  market-api-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: market-api
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run unit tests
+        working-directory: market-api
+        run: |
+          pytest -m "not integration" -v
+
+      - name: Run integration tests (if API key available)
+        working-directory: market-api
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: |
+          if [ -n "$FINNHUB_API_KEY" ]; then
+            echo "Running integration tests..."
+            pytest -m integration -v
+          else
+            echo "⚠️  Skipping integration tests (no FINNHUB_API_KEY secret)"
+          fi
+        if: always()
