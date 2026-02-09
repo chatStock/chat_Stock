@@ -25,6 +25,17 @@ _agents = {}
 _agent_request_counts = {}
 _tools_loaded = {}  # session_id -> bool
 
+# -------------------------------------------------------------------
+# Rolling memory (per session) — Idea #1
+# -------------------------------------------------------------------
+_session_summary = {}        # session_id -> str
+_session_turns = {}          # session_id -> list[tuple[str,str]]  (user, assistant)
+
+# Tuning knobs
+KEEP_LAST_TURNS = 6          # how many recent turns we keep verbatim
+SUMMARIZE_AFTER_TURNS = 12   # when turns exceed this, compress
+MAX_PROMPT_CHARS = 14000     # crude safety bound (chars proxy for tokens)
+
 
 def _safe_repr(obj, max_len=800):
     try:
@@ -50,14 +61,141 @@ def _dump_available_tools(agent: Agent, label: str):
         # Others implement it as a method you call.
         if callable(at):
             tools_val = at()
-            print(f"[DIAG] available_tools() ({label}) -> {type(tools_val)} = {_safe_repr(tools_val)}",
-                  file=sys.stderr, flush=True)
+            print(
+                f"[DIAG] available_tools() ({label}) -> {type(tools_val)} = {_safe_repr(tools_val)}",
+                file=sys.stderr,
+                flush=True,
+            )
         else:
             print(f"[DIAG] available_tools ({label}) -> {_safe_repr(at)}", file=sys.stderr, flush=True)
 
     except Exception as e:
-        print(f"[DIAG] available_tools dump failed ({label}): {type(e).__name__}: {e}",
-              file=sys.stderr, flush=True)
+        print(
+            f"[DIAG] available_tools dump failed ({label}): {type(e).__name__}: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+# -------------------------------------------------------------------
+# Rolling memory helpers
+# -------------------------------------------------------------------
+def _get_turns(session_id: str):
+    return _session_turns.setdefault(session_id, [])
+
+
+def _get_summary(session_id: str) -> str:
+    return _session_summary.get(session_id, "")
+
+
+def record_turn(session_id: str, user: str, assistant: str) -> None:
+    """
+    Call this after you produce the final assistant response.
+    """
+    _get_turns(session_id).append((user, assistant))
+
+
+def build_compact_prompt(session_id: str, user_input: str) -> str:
+    """
+    Returns a prompt that includes:
+    - stable system prompt (your tool rules)
+    - rolling summary memory
+    - last N verbatim turns
+    - current user message
+
+    NOTE: You should pass THIS to agent.run(), and clear agent.chat_history.
+    """
+    summary = _get_summary(session_id).strip()
+    turns = _get_turns(session_id)[-KEEP_LAST_TURNS:]
+
+    parts = []
+    parts.append(SYSTEM_PROMPT.strip() + "\n\n")
+    parts.append("You are continuing an ongoing conversation.\n\n")
+
+    if summary:
+        parts.append("=== Conversation Summary (memory) ===\n")
+        parts.append(summary + "\n\n")
+
+    if turns:
+        parts.append("=== Recent Turns ===\n")
+        for u, a in turns:
+            parts.append(f"User: {u}\nAssistant: {a}\n")
+        parts.append("\n")
+
+    parts.append("=== Current User Message ===\n")
+    parts.append(user_input)
+
+    prompt = "".join(parts)
+
+    # crude clamp — prevents pathological growth even if summarization fails
+    if len(prompt) > MAX_PROMPT_CHARS:
+        prompt = prompt[-MAX_PROMPT_CHARS:]
+
+    return prompt
+
+
+async def maybe_summarize_session(agent: Agent, session_id: str) -> None:
+    """
+    If turns exceed SUMMARIZE_AFTER_TURNS, summarize older turns into _session_summary
+    and keep only the last KEEP_LAST_TURNS verbatim.
+    """
+    turns = _get_turns(session_id)
+    if len(turns) < SUMMARIZE_AFTER_TURNS:
+        return
+
+    # Summarize everything except the last KEEP_LAST_TURNS (keep those verbatim)
+    to_summarize = turns[:-KEEP_LAST_TURNS]
+    if not to_summarize:
+        return
+
+    prev_summary = _get_summary(session_id).strip()
+
+    transcript_lines = []
+    for u, a in to_summarize:
+        transcript_lines.append(f"User: {u}\nAssistant: {a}\n")
+    transcript = "\n".join(transcript_lines)
+
+    summarizer_prompt = f"""
+You are a summarizer. Do NOT call any tools.
+
+Update (or create) a compact memory summary of the conversation so far.
+Focus on:
+- user intent / task
+- decisions made
+- constraints
+- important facts/names
+- unresolved issues
+Keep it concise (max ~250-350 tokens).
+
+Previous summary (if any):
+{prev_summary if prev_summary else "(none)"}
+
+Transcript to incorporate:
+{transcript}
+
+Return ONLY the updated summary text.
+""".strip()
+
+    # Prevent agent internal history from ballooning / interfering with summarization
+    if hasattr(agent, "chat_history"):
+        try:
+            agent.chat_history = []
+        except Exception:
+            pass
+
+    chunks = []
+    async for item in agent.run(summarizer_prompt):
+        if hasattr(item, "choices") and item.choices:
+            for choice in item.choices:
+                delta = getattr(choice, "delta", None)
+                content = getattr(delta, "content", None) if delta else None
+                if content:
+                    chunks.append(content)
+
+    new_summary = "".join(chunks).strip()
+    if new_summary:
+        _session_summary[session_id] = new_summary
+        _session_turns[session_id] = turns[-KEEP_LAST_TURNS:]
 
 
 async def get_agent(session_id: str) -> Agent:
@@ -126,8 +264,6 @@ async def get_agent(session_id: str) -> Agent:
             print(f"[AGENT] ⚠️  WARNING: Cached agent has no tools attribute BEFORE reload!", file=sys.stderr, flush=True)
 
         # ✅ FIX: DO NOT reload tools on every request.
-        # Reloading spawns a new MCP stdio server and causes duplicate-tool collisions:
-        # "Tool already defined by another server. Skipping."
         loaded = _tools_loaded.get(session_id, False)
         print(f"[AGENT] Tools previously loaded for session? {loaded}", file=sys.stderr, flush=True)
         if not loaded:
@@ -135,8 +271,11 @@ async def get_agent(session_id: str) -> Agent:
             await agent.load_tools()
             _tools_loaded[session_id] = True
         else:
-            print(f"[AGENT] ✅ Skipping tool reload (prevents duplicate MCP server + tool collisions).",
-                  file=sys.stderr, flush=True)
+            print(
+                f"[AGENT] ✅ Skipping tool reload (prevents duplicate MCP server + tool collisions).",
+                file=sys.stderr,
+                flush=True,
+            )
 
         # NEW: correct diagnostics
         _dump_available_tools(agent, "on reuse (no reload)")
