@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Quick test to verify MCP server can start and tools work
-Run this inside the backend container to test the MCP layer
+Pytest-compatible MCP component tests
+These run in CI alongside other pytest tests
 """
-import asyncio
+import pytest
+import httpx
 import sys
 from pathlib import Path
 
@@ -11,136 +12,114 @@ from pathlib import Path
 mcp_dir = Path(__file__).parent / "mcp-server"
 sys.path.insert(0, str(mcp_dir))
 
-print(f"Testing from: {Path(__file__).parent}")
-print(f"MCP directory: {mcp_dir}")
-print(f"Python path: {sys.path}")
-print("-" * 60)
 
+@pytest.mark.asyncio
 async def test_imports():
     """Test if we can import the MCP modules"""
-    print("\n1. Testing imports...")
-    try:
-        from app import config
-        print(f"   ✅ Imported config")
-        print(f"   MARKET_API_URL: {config.MARKET_API_URL}")
-    except Exception as e:
-        print(f"   ❌ Failed to import config: {e}")
-        return False
+    # Import config
+    from app import config
+    assert config.MARKET_API_URL is not None, "MARKET_API_URL should be set"
+    print(f"   ✅ Imported config")
+    print(f"   MARKET_API_URL: {config.MARKET_API_URL}")
     
-    try:
-        from app import market_client
-        print(f"   ✅ Imported market_client")
-    except Exception as e:
-        print(f"   ❌ Failed to import market_client: {e}")
-        return False
-    
-    return True
+    # Import market_client
+    from app import market_client
+    assert market_client is not None
+    print(f"   ✅ Imported market_client")
 
-async def test_market_client():
+
+@pytest.mark.asyncio
+async def test_market_client(respx_mock):
     """Test if market_client can reach market-api"""
-    print("\n2. Testing market_client functions...")
-    
     from app.market_client import fetch_quote, fetch_news
     from app.config import MARKET_API_URL
     
     print(f"   Target: {MARKET_API_URL}")
     
+    # Mock the quote endpoint
+    respx_mock.get(f"{MARKET_API_URL}/quote").mock(
+        return_value=httpx.Response(200, json={
+            "c": 192.17,
+            "pc": 185.50,
+            "t": 1707494400
+        })
+    )
+    
+    # Mock the news endpoint
+    respx_mock.get(f"{MARKET_API_URL}/news").mock(
+        return_value=httpx.Response(200, json=[
+            {
+                "headline": "Test headline for AAPL",
+                "source": "Test Source",
+                "datetime": 1707494400
+            }
+        ])
+    )
+    
     # Test quote
-    try:
-        print("\n   Testing fetch_quote('AAPL')...")
-        result = await fetch_quote("AAPL")
-        print(f"   ✅ fetch_quote succeeded")
-        print(f"      Current price: {result.get('c')}")
-        print(f"      Previous close: {result.get('pc')}")
-    except Exception as e:
-        print(f"   ❌ fetch_quote failed: {e}")
-        return False
+    print("\n   Testing fetch_quote('AAPL')...")
+    result = await fetch_quote("AAPL")
+    assert "c" in result, "Quote should contain current price (c)"
+    assert "pc" in result, "Quote should contain previous close (pc)"
+    print(f"   ✅ fetch_quote succeeded")
+    print(f"      Current price: {result.get('c')}")
+    print(f"      Previous close: {result.get('pc')}")
     
     # Test news
-    try:
-        print("\n   Testing fetch_news('AAPL')...")
-        result = await fetch_news("AAPL")
-        print(f"   ✅ fetch_news succeeded")
-        print(f"      Found {len(result)} news items")
-        if result:
-            print(f"      Latest: {result[0].get('headline', 'N/A')[:60]}...")
-    except Exception as e:
-        print(f"   ❌ fetch_news failed: {e}")
-        return False
-    
-    return True
+    print("\n   Testing fetch_news('AAPL')...")
+    result = await fetch_news("AAPL")
+    assert isinstance(result, list), "News should return a list"
+    print(f"   ✅ fetch_news succeeded")
+    print(f"      Found {len(result)} news items")
+    if result:
+        print(f"      Latest: {result[0].get('headline', 'N/A')[:60]}...")
 
-async def test_mcp_tools():
+
+@pytest.mark.asyncio
+async def test_mcp_tools(respx_mock):
     """Test if MCP server tools work"""
-    print("\n3. Testing MCP server tools...")
+    from app.server import get_quote, get_news
+    from app.config import MARKET_API_URL
+    print("   ✅ Imported MCP tools")
     
-    try:
-        from app.server import get_quote, get_news
-        print("   ✅ Imported MCP tools")
-    except Exception as e:
-        print(f"   ❌ Failed to import MCP tools: {e}")
-        return False
+    # Mock the quote endpoint
+    respx_mock.get(f"{MARKET_API_URL}/quote").mock(
+        return_value=httpx.Response(200, json={
+            "c": 192.17,
+            "pc": 185.50,
+            "t": 1707494400
+        })
+    )
+    
+    # Mock the news endpoint
+    respx_mock.get(f"{MARKET_API_URL}/news").mock(
+        return_value=httpx.Response(200, json=[
+            {
+                "headline": "Test headline for AAPL",
+                "source": "Test Source",
+                "datetime": 1707494400
+            }
+        ])
+    )
     
     # Test get_quote
-    try:
-        print("\n   Testing get_quote('AAPL')...")
-        result = await get_quote("AAPL")
-        print(f"   ✅ get_quote succeeded")
-        print(f"      Symbol: {result.get('symbol')}")
-        print(f"      Price: {result.get('current_price')}")
-        print(f"      Trend: {result.get('trend')}")
-    except Exception as e:
-        print(f"   ❌ get_quote failed: {e}")
-        return False
+    print("\n   Testing get_quote('AAPL')...")
+    result = await get_quote("AAPL")
+    assert "symbol" in result, "Result should contain symbol"
+    assert "current_price" in result, "Result should contain current_price"
+    assert "trend" in result, "Result should contain trend"
+    print(f"   ✅ get_quote succeeded")
+    print(f"      Symbol: {result.get('symbol')}")
+    print(f"      Price: {result.get('current_price')}")
+    print(f"      Trend: {result.get('trend')}")
     
     # Test get_news
-    try:
-        print("\n   Testing get_news('AAPL')...")
-        result = await get_news("AAPL")
-        print(f"   ✅ get_news succeeded")
-        print(f"      Found {len(result)} shaped news items")
-        if result:
-            print(f"      Latest: {result[0].get('headline', 'N/A')[:60]}...")
-    except Exception as e:
-        print(f"   ❌ get_news failed: {e}")
-        return False
-    
-    return True
-
-async def main():
-    print("=" * 60)
-    print("MCP SERVER COMPONENT TEST")
-    print("=" * 60)
-    
-    success = True
-    
-    # Run tests in order
-    if not await test_imports():
-        print("\n❌ Import test failed - cannot continue")
-        sys.exit(1)
-    
-    if not await test_market_client():
-        print("\n❌ Market client test failed")
-        success = False
-    
-    if not await test_mcp_tools():
-        print("\n❌ MCP tools test failed")
-        success = False
-    
-    print("\n" + "=" * 60)
-    if success:
-        print("✅ ALL TESTS PASSED")
-        print("=" * 60)
-        print("\nThe MCP server components are working correctly.")
-        print("If requests still don't happen, the issue is in the agent")
-        print("spawning the MCP server subprocess.")
-    else:
-        print("❌ SOME TESTS FAILED")
-        print("=" * 60)
-        print("\nFix the failed components before debugging further.")
-    
-    return 0 if success else 1
-
-if __name__ == "__main__":
-    exit_code = asyncio.run(main())
-    sys.exit(exit_code)
+    print("\n   Testing get_news('AAPL')...")
+    result = await get_news("AAPL")
+    assert isinstance(result, list), "News should return a list"
+    assert len(result) > 0, "News should return at least one item"
+    print(f"   ✅ get_news succeeded")
+    print(f"      Found {len(result)} shaped news items")
+    if result:
+        assert "headline" in result[0], "News items should contain headline"
+        print(f"      Latest: {result[0].get('headline', 'N/A')[:60]}...")
