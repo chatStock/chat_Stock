@@ -15,16 +15,12 @@ export async function streamChat(
     }),
   });
 
-  if (!res.body) {
-    throw new Error("No response body from backend");
+  if (!res.ok) {
+    throw new Error(`Backend error: ${res.status}`);
   }
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    onToken(decoder.decode(value));
-  }
+  const data = await res.json();
+  
+  // Send the entire response at once
+  onToken(data.response);
 }

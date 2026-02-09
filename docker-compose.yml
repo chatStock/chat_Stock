@@ -3,7 +3,7 @@ services:
     build:
       context: ./chat-backend
       dockerfile: Dockerfile
-    container_name: chat-backend
+    container_name: chat-stock-backend
     ports:
       - "8000:8000"
     env_file:
@@ -12,13 +12,16 @@ services:
       MCP_TRANSPORT: stdio
       MCP_HOST: 0.0.0.0
       MCP_PORT: 8000
+      MARKET_API_URL: http://market-api:9000
+    depends_on:
+      - market-api
     restart: unless-stopped
 
   frontend:
     build:
       context: ./chat-frontend
       dockerfile: Dockerfile
-    container_name: chat-frontend
+    container_name: chat-stock-frontend
     ports:
       - "5173:5173"
     env_file:
@@ -26,3 +29,52 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  market-api:
+    build:
+      context: ./market-api
+      dockerfile: Dockerfile
+    container_name: chat-stock-market-api
+    ports:
+      - "9000:9000"
+    env_file:
+      - ./market-api/.env
+    environment:
+      PORT: 9000
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: chat-stock-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - chat-stock-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    depends_on:
+      - market-api
+      - backend
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: chat-stock-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - chat-stock-grafana-data:/var/lib/grafana
+      - ./monitoring/grafana-dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana-datasources:/etc/grafana/provisioning/datasources
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  chat-stock-prometheus-data:
+  chat-stock-grafana-data:

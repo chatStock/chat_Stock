@@ -44,6 +44,6 @@ ENV MCP_TRANSPORT=stdio \
     MCP_PORT=8000
 
 # -----------------------------
-# Run FastAPI
+# Run FastAPI (FIXED: main:app not api:app)
 # -----------------------------
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
