@@ -1,5 +1,5 @@
-import asyncio
 import sys
+import os
 from pathlib import Path
 from dotenv import load_dotenv
 from huggingface_hub import Agent
@@ -11,9 +11,7 @@ MCP_SERVER_DIR = BASE_DIR / "mcp-server"
 
 SYSTEM_PROMPT = """
 You are a stock market assistant.
-
 You have access to EXACTLY TWO tools:
-
 1. get_news(symbol: str)
 2. get_quote(symbol: str)
 
@@ -21,16 +19,61 @@ RULES:
 - NEVER invent tool names
 - ALWAYS call the correct tool
 - If a tool fails, say data is unavailable
-- NEVER hallucinate facts
 """
 
-# Store agent instances per session
 _agents = {}
+_agent_request_counts = {}
+_tools_loaded = {}  # session_id -> bool
 
-def get_agent(session_id: str) -> Agent:
-    """Get or create an agent instance for a specific session"""
+
+def _safe_repr(obj, max_len=800):
+    try:
+        s = repr(obj)
+        if len(s) > max_len:
+            return s[:max_len] + "...(truncated)"
+        return s
+    except Exception as e:
+        return f"<repr-failed {type(e).__name__}: {e}>"
+
+
+def _dump_available_tools(agent: Agent, label: str):
+    """
+    HF MCP Agent doesn't expose `agent.tools`.
+    It *does* expose `available_tools` (per your dir(agent)).
+    This dump tells us what the agent thinks is callable right now.
+    """
+    try:
+        at = getattr(agent, "available_tools", None)
+        print(f"[DIAG] available_tools attr ({label}) = {type(at)}", file=sys.stderr, flush=True)
+
+        # Some libs implement available_tools as a property returning dict/list
+        # Others implement it as a method you call.
+        if callable(at):
+            tools_val = at()
+            print(f"[DIAG] available_tools() ({label}) -> {type(tools_val)} = {_safe_repr(tools_val)}",
+                  file=sys.stderr, flush=True)
+        else:
+            print(f"[DIAG] available_tools ({label}) -> {_safe_repr(at)}", file=sys.stderr, flush=True)
+
+    except Exception as e:
+        print(f"[DIAG] available_tools dump failed ({label}): {type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
+
+
+async def get_agent(session_id: str) -> Agent:
+    """Get or create an agent for the session. Agents are cached per session."""
+
+    _agent_request_counts[session_id] = _agent_request_counts.get(session_id, 0) + 1
+    request_num = _agent_request_counts[session_id]
+
     if session_id not in _agents:
-        _agents[session_id] = Agent(
+        print(f"\n{'='*80}", file=sys.stderr, flush=True)
+        print(f"[AGENT] 🆕 Creating NEW agent for session: {session_id}", file=sys.stderr, flush=True)
+        print(f"[AGENT] Request #: {request_num}", file=sys.stderr, flush=True)
+        print(f"[AGENT] System prompt length: {len(SYSTEM_PROMPT)} chars", file=sys.stderr, flush=True)
+        print(f"[AGENT] MCP server dir: {MCP_SERVER_DIR}", file=sys.stderr, flush=True)
+
+        agent = Agent(
             model="Qwen/Qwen2.5-7B-Instruct",
             prompt=SYSTEM_PROMPT,
             servers=[
@@ -39,62 +82,71 @@ def get_agent(session_id: str) -> Agent:
                     "command": sys.executable,
                     "args": ["-m", "app.server"],
                     "cwd": str(MCP_SERVER_DIR),
+                    "env": {
+                        "PYTHONPATH": str(MCP_SERVER_DIR),
+                        "MARKET_API_URL": os.getenv("MARKET_API_URL", "http://market-api:9000"),
+                    },
                 }
             ],
         )
-    return _agents[session_id]
 
-async def ainput(prompt: str) -> str:
-    return await asyncio.to_thread(input, prompt)
+        # Keep your old diagnostics (even though tools attr doesn't exist for this class)
+        print(f"[AGENT] Loading tools...", file=sys.stderr, flush=True)
+        await agent.load_tools()
+        _tools_loaded[session_id] = True
 
-
-async def chat_loop():
-    # Use a default session for CLI
-    session_id = "cli_session"
-    agent = get_agent(session_id)
-    await agent.load_tools()
-    print("MCP tools loaded")
-    
-    while True:
-        user_input = await ainput("You> ")
-        if user_input.lower() in {"exit", "quit"}:
-            break
-
-        assistant_text = ""
-        saw_tool_call = False
-        saw_tool_response = False
-
-        async for item in agent.run(user_input):
-
-            if hasattr(item, "choices"):
-                for choice in item.choices:
-                    delta = choice.delta
-
-                    if delta and delta.content:
-                        assistant_text += delta.content
-
-                    if delta and delta.tool_calls:
-                        saw_tool_call = True
-                        print("🛠️ TOOL CALL REQUEST:", delta.tool_calls)
-
-            if isinstance(item, dict) and item.get("role") == "tool":
-                saw_tool_response = True
-                print("📦 TOOL RESPONSE:", item)
-
-        if assistant_text.strip():
-            print("Bot>", assistant_text.strip())
+        if hasattr(agent, "tools"):
+            print(f"[AGENT] ✓ Loaded {len(agent.tools)} tools:", file=sys.stderr, flush=True)
+            for tool_name in agent.tools.keys():
+                print(f"[AGENT]   - {tool_name}", file=sys.stderr, flush=True)
         else:
-            print("Bot> (no assistant output)")
+            print(f"[AGENT] ⚠️  Agent has no 'tools' attribute after load_tools()", file=sys.stderr, flush=True)
 
-        if saw_tool_call and not saw_tool_response:
-            print("⚠️ Tool was requested but no response was received.")
-        elif saw_tool_response:
-            print("✅ Tool call completed successfully.")
+        # NEW: correct diagnostics for this HF MCP Agent
+        _dump_available_tools(agent, "after first load_tools()")
 
+        print(f"[AGENT] Agent type: {type(agent)}", file=sys.stderr, flush=True)
+        print(f"[AGENT] Agent ID: {id(agent)}", file=sys.stderr, flush=True)
 
-async def main():
-    await chat_loop()
+        _agents[session_id] = agent
+        print(f"[AGENT] ✓ Agent cached for session {session_id}", file=sys.stderr, flush=True)
+        print(f"{'='*80}\n", file=sys.stderr, flush=True)
 
+    else:
+        agent = _agents[session_id]
+        print(f"\n{'='*80}", file=sys.stderr, flush=True)
+        print(f"[AGENT] ♻️  REUSING cached agent for session: {session_id}", file=sys.stderr, flush=True)
+        print(f"[AGENT] Request #: {request_num}", file=sys.stderr, flush=True)
+        print(f"[AGENT] Agent ID: {id(agent)}", file=sys.stderr, flush=True)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+        # Keep your old diagnostics
+        if hasattr(agent, "tools"):
+            print(f"[AGENT] Tools before reload: {len(agent.tools)}", file=sys.stderr, flush=True)
+        else:
+            print(f"[AGENT] ⚠️  WARNING: Cached agent has no tools attribute BEFORE reload!", file=sys.stderr, flush=True)
+
+        # ✅ FIX: DO NOT reload tools on every request.
+        # Reloading spawns a new MCP stdio server and causes duplicate-tool collisions:
+        # "Tool already defined by another server. Skipping."
+        loaded = _tools_loaded.get(session_id, False)
+        print(f"[AGENT] Tools previously loaded for session? {loaded}", file=sys.stderr, flush=True)
+        if not loaded:
+            print(f"[AGENT] 🔄 Tools not marked loaded; calling load_tools() once.", file=sys.stderr, flush=True)
+            await agent.load_tools()
+            _tools_loaded[session_id] = True
+        else:
+            print(f"[AGENT] ✅ Skipping tool reload (prevents duplicate MCP server + tool collisions).",
+                  file=sys.stderr, flush=True)
+
+        # NEW: correct diagnostics
+        _dump_available_tools(agent, "on reuse (no reload)")
+
+        if hasattr(agent, "chat_history"):
+            try:
+                print(f"[AGENT] Chat history: {len(agent.chat_history)} messages", file=sys.stderr, flush=True)
+            except Exception:
+                pass
+
+        print(f"{'='*80}\n", file=sys.stderr, flush=True)
+
+    return _agents[session_id]

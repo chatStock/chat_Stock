@@ -1,20 +1,18 @@
 import logging
+import sys
+import os
 from mcp.server.fastmcp import FastMCP
 
 from app.market_client import fetch_quote, fetch_news
 from app.stock_logic import shape_stock
 from app.news_logic import shape_news_item
-import sys
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("mcp-server")
 
-print("MCP SERVER BOOTED", file=sys.stderr, flush=True)
-
 # MCP server name MUST match what the agent connects to
 mcp = FastMCP("market-tools", json_response=True)
 
-# Added better descriptions for MCP tools and basic fallbacks with ChatGPT
 
 @mcp.tool(
     description=(
@@ -79,6 +77,31 @@ async def get_news(symbol: str) -> list[dict]:
     return shaped
 
 
+@mcp.tool(description="Health check to verify MCP server is alive and responsive")
+async def health_check() -> dict:
+    """Simple health check for connection monitoring"""
+    from datetime import datetime
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "server": "market-tools-mcp"
+    }
+
+
 if __name__ == "__main__":
-    log.info("[MCP] Server starting (stdio)")
-    mcp.run()
+    from app.config import TRANSPORT, HOST, PORT
+    
+    print(f"MCP SERVER BOOTING (transport={TRANSPORT})", file=sys.stderr, flush=True)
+    
+    if TRANSPORT.lower() == "http":
+        log.info(f"[MCP] Server starting in HTTP mode on {HOST}:{PORT}")
+        
+        # ========================================================================
+        # FIXED: FastMCP uses mcp.run() with host/port params, not get_asgi_app()
+        # ========================================================================
+        mcp.run(host=HOST, port=PORT)
+        
+    else:
+        # Fallback to stdio mode
+        log.info("[MCP] Server starting in stdio mode")
+        mcp.run()
