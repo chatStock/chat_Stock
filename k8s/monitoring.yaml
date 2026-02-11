@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-env
+data:
+  GF_USERS_ALLOW_SIGN_UP: "false"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.4.2
+        ports:
+        - containerPort: 3000
+        envFrom:
+        - configMapRef:
+            name: grafana-env
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chat-stock-secrets
+              key: GF_SECURITY_ADMIN_PASSWORD
+        volumeMounts:
+        - name: grafana-datasources
+          mountPath: /etc/grafana/provisioning/datasources/datasource.yml
+          subPath: datasource.yml
+        - name: grafana-dashboard-provider
+          mountPath: /etc/grafana/provisioning/dashboards/dashboard.yml
+          subPath: dashboard.yml
+        - name: grafana-dashboards
+          mountPath: /etc/grafana/provisioning/dashboards/json
+        - mountPath: /var/lib/grafana
+          name: grafana-storage-volume
+      volumes:
+      - name: grafana-datasources
+        configMap:
+          name: grafana-datasources
+      - name: grafana-dashboard-provider
+        configMap:
+          name: grafana-dashboard-provider
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-dashboards
+      - name: grafana-storage-volume
+        persistentVolumeClaim:
+          claimName: grafana-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-service
+spec:
+  type: NodePort
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 32000
