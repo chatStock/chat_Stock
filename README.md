@@ -1,161 +1,109 @@
 # chat_Stock
 
-#### Figure 1 — Docker Compose architecture of chat_Stock
-```
-╔══════════════════════════════════════════════════════════════════════╗
-║                         Docker Compose Network                       ║
-║                                                                      ║
-║  ┌──────────────────────────┐                                        ║
-║  │      chat-frontend       │                                        ║
-║  │──────────────────────────│                                        ║
-║  │  • React (Vite build)    │                                        ║
-║  │  • Nginx static server   │                                        ║
-║  │  • / → UI                │                                        ║
-║  └───────────┬──────────────┘                                        ║
-║              │  HTTP                                                 ║
-║              ▼                                                       ║
-║  ┌──────────────────────────┐        ┌──────────────────────────┐    ║
-║  │       chat-backend       │ ─────▶ │        market-api        │   ║
-║  │──────────────────────────│  HTTP  │──────────────────────────│    ║
-║  │  • Agent orchestration   │        │  • Finnhub wrapper       │    ║
-║  │  • MCP tools             │        │  • /quote   /news        │    ║
-║  │  • Streaming responses   │        │  • /metrics              │    ║
-║  └───────────┬──────────────┘        └───────────┬──────────────┘    ║
-║              │                                   │  HTTPS            ║
-║              ▼                                   ▼                   ║
-║  ┌──────────────────────────┐              ( Finnhub API )           ║
-║  │        prometheus        │                                        ║
-║  │──────────────────────────│                                        ║
-║  │  • Metrics store         │ ◀─────────── /metrics ────────────────╢
-║  └───────────┬──────────────┘                                        ║
-║              │                                                       ║
-║              ▼                                                       ║
-║  ┌──────────────────────────────────────────────────────────┐        ║
-║  │                         grafana                          │        ║
-║  │──────────────────────────────────────────────────────────│        ║
-║  │  • Dashboards                                            │        ║
-║  │  • Latency / tool calls / errors                         │        ║
-║  └──────────────────────────────────────────────────────────┘        ║
-║                                                                      ║
-╚══════════════════════════════════════════════════════════════════════╝
+chat_Stock is a multi-service stock chat application with:
+- React frontend (`chat-frontend`)
+- Python chat backend and MCP tools (`chat-backend`)
+- Python market data API (`market-api`)
+- Monitoring with Prometheus and Grafana (`monitoring`)
 
+This repository supports two runtime modes:
+- Docker Compose for local full-stack runs
+- Kubernetes manifests in `k8s/` for cluster deployment demos
+
+## Architecture
+
+### Docker Compose (local dev)
+
+```text
+frontend (5173) -> backend (8000) -> market-api (9000) -> Finnhub
+                                     |
+                                     +-> /metrics -> prometheus (9090) -> grafana (3000)
 ```
 
-## What is this repo?
+### Kubernetes (demo branch)
 
-chat_Stock is a basic multi-service stock market chat application composed of:
+```text
+frontend Deployment/Service (frontend-service:5173)
+  -> backend Deployment/Service (backend-service:8000)
+    -> market-api Deployment/Service (market-api-service:9000)
+      -> Finnhub external API
 
-* a React frontend
-* a Python backend handling agent logic (MCP)
-* a separate market data API
-* monitoring via Prometheus and Grafana
+prometheus Deployment/Service (prometheus-service:9090)
+  scrapes:
+  - market-api-service:9000/metrics
+  - localhost:9090 (self)
 
-All services are orchestrated with Docker Compose.
+grafana Deployment/Service (grafana-service:3000)
+  datasource: Prometheus
+  dashboard: market-api-dashboard.json (provisioned via ConfigMap)
+```
 
-The use case is simple: you can ask for news or recent stock information about a company. 
-Future work could implement a temporal dimension to the MCP tools, but for now, the goal is to provide a working MVP for coursework.
+## Prometheus Data Sources
 
----
+Prometheus is configured to scrape:
+- `market-api` metrics endpoint: `/metrics`
+- Prometheus self-metrics
 
-## Repo structure
+Current config locations:
+- Compose: `monitoring/prometheus.yml`
+- Kubernetes: `k8s/prometheus.yaml` (ConfigMap `prometheus-config`)
+
+Important: the backend is not currently scraped by Prometheus in these configs.
+
+## Repo Structure
 
 ```text
 .
-├── chat-frontend/        # React (Vite) frontend
-├── chat-backend/         # Agent orchestration + MCP tools
-├── market-api/           # Stock / market data API
-├── monitoring/           # Prometheus & Grafana configs
-├── docker-compose.yml
-└── .github/workflows/    # CI
+|-- chat-frontend/
+|-- chat-backend/
+|-- market-api/
+|-- monitoring/
+|-- k8s/
+|-- .github/workflows/
+|-- docker-compose.yml
+`-- README_k8s.md
 ```
 
----
-
-## How to run
-
-### Full stack (recommended)
+## Run With Docker Compose
 
 ```bash
 docker compose up --build
 ```
 
-This starts:
+Services:
+- frontend
+- backend
+- market-api
+- prometheus
+- grafana
 
-* frontend
-* backend
-* market-api
-* prometheus
-* grafana
+## Run With Kubernetes
 
----
-
-### Run services individually (dev)
-
-Frontend:
-
-```bash
-cd chat-frontend
-npm install
-npm run dev
-```
-
-Backend:
-
-```bash
-cd chat-backend
-uvicorn api:app --reload
-```
-
-Market API:
-
-```bash
-cd market-api
-python app.py
-```
-
----
-
-## Development workflow
-
-* Do **not** push directly to `main`
-* Open PRs against `dev`
-* Only `dev` may be merged into `main`
-
-These rules are enforced by CI.
-
----
+See `README_k8s.md` for the exact workflow and `kubectl` commands.
 
 ## CI
 
-CI runs on pull requests and enforces:
+Workflow file: `.github/workflows/ci.yml`
 
-* branch flow (`dev → main` only)
-* backend unit tests
+Current CI responsibilities:
+- Branch policy checks for PR targets
+- Backend tests
+- Market API tests
 
-CI configuration lives in:
-
-```text
-.github/workflows/
-```
-
----
+Note: CI currently does not deploy to Kubernetes (no CD job in `ci.yml`).
 
 ## Tests
 
-Backend tests use `pytest`.
+Run backend tests:
 
-Run locally:
-
-(example, backend)
 ```bash
 cd chat-backend
 pytest
 ```
 
-Tests are also run automatically in CI.
+Run market API tests:
 
----
-
-## Monitoring
-> TODO
-
+```bash
+cd market-api
+pytest
+```
