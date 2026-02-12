@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: market-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: market-api
+  template:
+    metadata:
+      labels:
+        app: market-api
+    spec:
+      containers:
+      - name: market-api
+        image: chat-stock-market-api:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9000
+        env:
+        - name: PORT
+          value: "9000"
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: chat-stock-secrets
+              key: HF_TOKEN
+        - name: FINNHUB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: chat-stock-secrets
+              key: FINNHUB_API_KEY
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: market-api-service
+spec:
+  selector:
+    app: market-api
+  ports:
+    - protocol: TCP
+      port: 9000
+      targetPort: 9000
