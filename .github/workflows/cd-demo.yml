@@ -1,0 +1,13 @@
+name: CD Demo
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  fake-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Simulated CD on tag
+        run: echo "weeeee"
